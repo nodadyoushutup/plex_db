@@ -10,7 +10,10 @@ token = os.environ.get("TOKEN")
 db_password = os.environ.get("DB_PASSWORD")
 ip_address = os.environ.get("IP_ADDRESS")
 
-app = Flask(__name__, static_folder="library")
+
+
+static = "/home/ubuntu/plex_db/static"
+app = Flask(__name__, static_folder=static)
 
 # app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 app.config['SQLALCHEMY_DATABASE_URI'] = f"postgresql://plex:{db_password}@{ip_address}:5432/plex"

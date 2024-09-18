@@ -10,7 +10,8 @@ from app.library import Library
 from app.section import Section
 from app.server import Server
 from app.movie import Movie
-
+from app.utils import download_image
+from app.image import Image
 
 # Set up the root logger
 logging.basicConfig(
@@ -45,18 +46,24 @@ def ensure_migrations():
 if __name__ == '__main__':
     with app.app_context():
         print("Starting")
-        configure_loggers()
         # ensure_migrations()
+        configure_loggers()
+        print("hello")
         
         # server = Server.create(plex)
 
         # library = Library.create(plex.library)
 
-        sections_data = plex.library.sections()
-        for section in sections_data:
-            section = Section.create(section)
+        # sections_data = plex.library.sections()
+        # for section in sections_data:
+        #     section = Section.create(section)
         
-        # movie_data = plex.library.sections()[0].getGuid("plex://movie/5d776b3cfb0d55001f560ff1")
-        # Movie.create(movie_data)
+        movie_data = plex.library.sections()[0].getGuid("plex://movie/5d776b3cfb0d55001f560ff1")
+        movie = Movie.upsert(movie_data)      
+        
 
-    app.run(debug=True)
+
+
+    app.run(
+        # debug=True
+    )

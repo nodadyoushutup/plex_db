@@ -1,11 +1,10 @@
 from datetime import datetime
 from .config import db
 from .model import Model
-import os
-import requests
 from hashlib import md5
+from .utils import build_url
+from .image import Image
 
-from .config import baseurl, token
 
 class Movie(Model):
     addedAt = db.Column(db.DateTime)
@@ -69,47 +68,30 @@ class Movie(Model):
     year = db.Column(db.Integer)
 
 
+    def download_images(self, force_ext=None, quality=None):
+        self.download_thumb(force_ext, quality=quality)
+        self.download_art(force_ext, quality=quality)
+
+    def download_thumb(self, force_ext, quality=None):
+        self._download_image("thumb", max_width=250, force_ext=force_ext, quality=quality)
+
+    def download_art(self, force_ext, quality=None):
+        self._download_image("art", max_height=1080, force_ext=force_ext, quality=quality)
+
+    def _download_image(self, key, max_width=None, max_height=None, force_ext=None, quality=None):
+        if key == "thumb":
+            img_key = getattr(self, key)
+            url = build_url(img_key)
+        elif key == "art":
+            img_key = getattr(self, key)
+            url = build_url(img_key)
+        else:
+            raise ValueError(f"Unknown image key: {key}")
+        image = Image(url, img_key)
+        image.download(max_width, max_height, force_ext, quality=quality)
+        
     @classmethod
-    def create(cls, obj=None, **kwargs):
-        if obj is not None:
-            def get_file_path_with_extension(url, path):
-                response = requests.head(url)
-                if response.status_code == 200:
-                    content_type = response.headers['Content-Type']
-                    extension = content_type.split('/')[-1]
-                    return f"{path}.{extension}"
-                return None
-
-            def path_has_changed(current_path, new_path_with_extension):
-                if not os.path.exists(current_path):
-                    return True
-                return os.path.basename(current_path) != os.path.basename(new_path_with_extension)
-
-            def download_image(url, path):
-                response = requests.get(url)
-                if response.status_code == 200:
-                    content_type = response.headers['Content-Type']
-                    extension = content_type.split('/')[-1]
-                    path_with_extension = f"{path}.{extension}"
-                    with open(path_with_extension, 'wb') as file:
-                        file.write(response.content)
-                    cls.logger.info(f"Image saved to {path_with_extension}")
-                else:
-                    cls.logger.warning(f"Failed to download image from {url}")
-            cls.logger.info(f"Synced movie: {obj.title} ({obj.year})")
-            static_folder = os.path.join(os.path.dirname(__file__), '..', 'library')
-            if obj.thumb:
-                thumb_url = f"{baseurl}{obj.thumb}?X-Plex-Token={token}"
-                thumb_path = os.path.join(static_folder, os.path.relpath(obj.thumb.replace("/library", ""), '/'))
-                os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
-                thumb_path_with_extension = get_file_path_with_extension(thumb_url, thumb_path)
-                if thumb_path_with_extension and path_has_changed(thumb_path_with_extension, thumb_path_with_extension):
-                    download_image(thumb_url, thumb_path)
-            if obj.art:
-                art_url = f"{baseurl}{obj.art}?X-Plex-Token={token}"
-                art_path = os.path.join(static_folder, os.path.relpath(obj.art.replace("/library", ""), '/'))
-                os.makedirs(os.path.dirname(art_path), exist_ok=True)
-                art_path_with_extension = get_file_path_with_extension(art_url, art_path)
-                if art_path_with_extension and path_has_changed(art_path_with_extension, art_path_with_extension):
-                    download_image(art_url, art_path)
-        return super().create(obj=obj, **kwargs)
+    def create(cls, _obj=None, **kwargs):
+        record = super().create(_obj, **kwargs)
+        # record.download_images(force_ext="jpg", quality=50)
+        return record
