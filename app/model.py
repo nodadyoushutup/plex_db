@@ -1,7 +1,9 @@
+# model.py
 import logging
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, and_, or_
 from uuid import uuid4
 from .config import db
 
@@ -12,19 +14,23 @@ class Model(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     uuid = db.Column(db.String)
     created_at = db.Column(db.DateTime, default=datetime.now)
-    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    
+    updated_at = db.Column(
+        db.DateTime,
+        default=datetime.now,
+        onupdate=datetime.now
+    )
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         cls.__tablename__ = cls.__name__.lower()
         cls._logger = cls.setup_logger(cls.__name__)
-    
+
     def __repr__(self):
-            mapper = inspect(self).mapper
-            attrs = ', '.join(f"{column.key}={repr(getattr(self, column.key))}" for column in mapper.column_attrs)
-            return f"<{self.__class__.__name__}({attrs})>"
-        
+        mapper = inspect(self).mapper
+        attrs = ', '.join(
+            f"{column.key}={repr(getattr(self, column.key))}" for column in mapper.column_attrs)
+        return f"<{self.__class__.__name__}({self.id})>"
+
     @staticmethod
     def setup_logger(name):
         _logger = logging.getLogger(name)
@@ -33,49 +39,41 @@ class Model(db.Model):
         return _logger
 
     @classmethod
-    def _get_obj_dict_kwargs(cls, _obj=None, _dict={}, **kwargs):
-        if _obj:
-            obj_vars = {
-                key: value for key, value in vars(_obj).items()
-                if not key.startswith('_') and hasattr(cls, key)
-            }
-        else:
-            obj_vars = {}
-        if _dict:
-            dict_vars = {
-                key: value for key, value in _dict.items()
-                if not key.startswith('_') and hasattr(cls, key)
-            }
-        else:
-            dict_vars = {}
-        return {
-            key: value for key, value in {**obj_vars, **dict_vars, **kwargs}.items()
-            if not key.startswith('_') and hasattr(cls, key)
-        }
-    
+    def _flatten_args_kwargs(cls, *args: (dict | object), **kwargs: Any):
+        if not kwargs:
+            kwargs = {}
+        for arg in args:
+            if isinstance(arg, dict):
+                kwargs.update(
+                    {k: v for k, v in arg.items() if hasattr(cls, k)})
+            elif hasattr(arg, "__dict__"):
+                kwargs.update(
+                    {k: v for k, v in arg.__dict__.items() if hasattr(cls, k)})
+        return kwargs
+
     @classmethod
-    def _get_delta(cls, existing_record, filtered_kwargs):
+    def _get_delta(cls, existing_record, flattened_kwargs):
         delta = {}
-        for key, value in filtered_kwargs.items():
+        for key, value in flattened_kwargs.items():
             if hasattr(existing_record, key):
                 current_value = getattr(existing_record, key)
                 if current_value != value:
                     delta[key] = value
         return delta
-    
+
     @classmethod
-    def _set_delta(cls, existing_record, delta):
-        for key, value in delta.items():
-            if hasattr(existing_record, key):
-                setattr(existing_record, key, value)
-        
+    def _get_existing_record(cls, key, kwargs):
+        if key in kwargs and hasattr(cls, key):
+            return cls.query.filter_by(**{key: kwargs.get(key)}).first()
+        return None
+
     @classmethod
-    def create(cls, _obj=None, **kwargs):
+    def create(cls, *args: (dict | list | set | object), **kwargs):
         try:
-            filtered_kwargs = cls._get_obj_dict_kwargs(_obj, **kwargs)
-            if not filtered_kwargs.get("uuid"):
-                filtered_kwargs.update({"uuid": str(uuid4())})
-            new_record = cls(**filtered_kwargs)
+            flattened_kwargs = cls._flatten_args_kwargs(*args, **kwargs)
+            if not flattened_kwargs.get("uuid"):
+                flattened_kwargs.update({"uuid": str(uuid4())})
+            new_record = cls(**flattened_kwargs)
             db.session.add(new_record)
             db.session.commit()
             cls._logger.debug(f"Created new {cls.__name__}: {new_record}")
@@ -85,107 +83,114 @@ class Model(db.Model):
             db.session.rollback()
             raise
 
-    def update(self, **kwargs):
-        try:
-            delta = self._get_delta(self, kwargs)
-            if delta:
-                for key, value in delta.items():
-                    setattr(self, key, value)  # Apply only the changed fields
-                db.session.commit()
-                self.logger.info(f"Updated {self.__class__.__name__}: {self}")
-            else:
-                self.logger.info(f"No changes detected for {self.__class__.__name__} with id {self.id}.")
-            return self
-        except Exception as e:
-            self.logger.warning(f"Failed to update {self.__class__.__name__} with id {self.id}: {e}")
-            db.session.rollback()
-            raise
-
     @classmethod
     def upsert(cls, *args, _key="id", **kwargs):
-        _obj = None
-        _dict = None
-        if len(args) == 1:
-            if isinstance(args[0], dict):
-                _dict = args[0]
-            elif not isinstance(args[0], (str, int, set, list, tuple, dict)):
-                _obj = args[0]
-        elif len(args) >= 2:
-            if len(args) == 2:
-                print(type(args[1]))
-                if isinstance(args[1], str):
-                    _key = args[1]
-            elif len(args) == 3:
-                if isinstance(args[2], str):
-                    _key = args[2]
-            if isinstance(args[0], dict):
-                _dict = args[0]
-            if isinstance(args[1], dict):
-                _dict = args[1]
-            if not isinstance(args[0], (str, int, set, list, tuple, dict)):
-                _obj = args[0]
-            if not isinstance(args[1], (str, int, set, list, tuple, dict)):
-                _obj = args[1]
-        filtered_kwargs = cls._get_obj_dict_kwargs(_obj, _dict, **kwargs)
-        if _key not in filtered_kwargs and not _key == "id":
-            raise ValueError(f"Key '{_key}' not found in provided data for upsert.")
         try:
-            existing_record = cls._get_existing_record(_key, filtered_kwargs)
+            flattened_kwargs = cls._flatten_args_kwargs(*args, **kwargs)
+            existing_record = cls._get_existing_record(_key, flattened_kwargs)
             if existing_record:
-                delta = cls._get_delta(existing_record, filtered_kwargs)
-                if delta:
-                    cls._logger.debug(f"Changes detected for {cls.__name__} with {_key} {filtered_kwargs[_key]}, applying updates.")
-                    existing_record.update(**filtered_kwargs)  # Use the new update method
-                else:
-                    cls._logger.debug(f"No changes detected for {cls.__name__} with {_key} {filtered_kwargs[_key]}.")
-                return existing_record
+                return existing_record.update(**flattened_kwargs)
             else:
-                cls._logger.debug(f"No existing {cls.__name__} found with the provided {_key}, creating a new one.")
-                return cls.create(**filtered_kwargs)
-
+                return cls.create(**flattened_kwargs)
         except Exception as e:
             cls._logger.warning(f"Failed to upsert {cls.__name__}: {e}")
             db.session.rollback()
             raise
 
     @classmethod
-    def _get_existing_record(cls, key, kwargs):
-        if key in kwargs and hasattr(cls, key):
-            filter_by_value = {key: kwargs.get(key)}
-            return cls.query.filter_by(**filter_by_value).first()
-        return None
-        
-    @classmethod
-    def get(cls, _id=None, _dict={}, **kwargs):
-        # TODO: Make this work similar to the upsert where it can take args and kwargs in any way
+    def get(cls, *args, _first=False, **kwargs):
+        if args and isinstance(args[0], int):
+            kwargs.update({"id": args[0]})
+        flattened_kwargs = cls._flatten_args_kwargs(*args, **kwargs)
         try:
-            if _id and isinstance(_id, int):
-                records = cls._get_existing_record("id", {"id": _id})
-                cls._logger.info(f"Retrieved {len(records)} {cls.__name__} records with filters {kwargs}.")
-            elif kwargs:
-                records = cls.query.filter_by(**kwargs).all()
-                cls._logger.info(f"Retrieved {len(records)} {cls.__name__} records with filters {kwargs}.")
+            if flattened_kwargs:
+                records = cls.query.filter_by(**flattened_kwargs)
+                cls._logger.info(
+                    f"Retrieved {len(records.all())} {cls.__name__} records with filters {flattened_kwargs}.")
             else:
-                records = cls.query.all()
-                cls._logger.info(f"Retrieved all {cls.__name__} records. Count: {len(records)}")
-            return records
+                records = cls.query
+                cls._logger.info(
+                    f"Retrieved all {cls.__name__} records. Count: {len(records.all())}")
+            if not _first:
+                return records.all()
+            else:
+                return records.first()
         except Exception as e:
-            cls._logger.warning(f"Failed to retrieve {cls.__name__} records with filters {kwargs}: {e}")
+            cls._logger.warning(
+                f"Failed to retrieve {cls.__name__} records with filters {flattened_kwargs}: {e}")
             raise
 
-    
+    @classmethod
+    def search(cls, filters, _first=False, _any=False):
+        try:
+            query = cls.query
+            operator_map = {
+                '>': '__gt__',
+                '<': '__lt__',
+                '>=': '__ge__',
+                '<=': '__le__',
+                '==': '__eq__',
+                '=': '__eq__',
+                '!=': '__ne__',
+                'like': 'like',
+                'ilike': 'ilike'
+            }
+            filter_conditions = []
+            for field, operator, value in filters:
+                if hasattr(cls, field):
+                    column_attr = getattr(cls, field)
+                    if operator in operator_map:
+                        filter_condition = getattr(
+                            column_attr, operator_map[operator])(value)
+                        filter_conditions.append(filter_condition)
+            if filter_conditions:
+                if not _any:
+                    query = query.filter(and_(*filter_conditions))
+                else:
+                    query = query.filter(or_(*filter_conditions))
+            records = query
+            cls._logger.info(
+                f"Search returned {len(records.all())} {cls.__name__} records with filters {filters}.")
+            if not _first:
+                return records.all()
+            else:
+                return records.first()
+        except Exception as e:
+            cls._logger.warning(
+                f"Failed to search {cls.__name__} with filters {filters}: {e}")
+            raise
+
+    def update(self, *args, **kwargs):
+        try:
+            flattened_kwargs = self._flatten_args_kwargs(*args, **kwargs)
+            delta = self._get_delta(self, flattened_kwargs)
+            if delta:
+                for key, value in delta.items():
+                    setattr(self, key, value)
+                self.updated_at = datetime.now()
+                db.session.commit()
+                self._logger.info(f"Updated {self.__class__.__name__}: {self}")
+            else:
+                self._logger.info(
+                    f"No changes detected during update for {self.__class__.__name__} with id {self.id}.")
+            return self
+        except Exception as e:
+            self._logger.warning(
+                f"Failed to update {self.__class__.__name__} with id {self.id}: {e}")
+            db.session.rollback()
+            raise
 
     def delete(self):
         try:
             record = self
             db.session.delete(self)
             db.session.commit()
-            self.logger.info(f"Deleted {self.__class__.__name__}: {record.id}.")
+            self._logger.info(
+                f"Deleted {self.__class__.__name__}: {record.id}."
+            )
             return True
         except Exception as e:
-            self.logger.warning(f"Failed to delete {self.__class__.__name__} with id {self.id}: {e}")
+            self._logger.warning(
+                f"Failed to delete {self.__class__.__name__} with id {self.id}: {e}")
             db.session.rollback()
             raise
-
-
-    

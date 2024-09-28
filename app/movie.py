@@ -1,9 +1,10 @@
-from datetime import datetime
+# movie.py
+
 from .config import db
 from .model import Model
-from hashlib import md5
 from .utils import build_url
 from .image import Image
+from app.guid import Guid
 
 
 class Movie(Model):
@@ -42,7 +43,14 @@ class Movie(Model):
     editionTitle = db.Column(db.String)
     enableCreditsMarkerGeneration = db.Column(db.Integer)
     # genres = db.Column(db.JSON) # Relationship (future, do not touch)
-    # guids = db.Column(db.JSON) # Relationship (future, do not touch)
+    # TODO: Make guids reverse relationship. This needs to be a many2many or
+    # somehow allow you to find the media by doing guid.media_id or something to that effect
+    guids = db.relationship(
+        "Guid",
+        primaryjoin="and_(foreign(Guid.media_id) == Movie.id, Guid.media_type == 'movie')",
+        viewonly=True,
+        backref="movie"
+    )
     # labels = db.Column(db.JSON) # Relationship (future, do not touch)
     languageOverride = db.Column(db.String)
     # markers = db.Column(db.JSON) # Relationship (future, do not touch)
@@ -67,16 +75,17 @@ class Movie(Model):
     # writers = db.Column(db.JSON) # Relationship (future, do not touch)
     year = db.Column(db.Integer)
 
-
     def download_images(self, force_ext=None, quality=None):
         self.download_thumb(force_ext, quality=quality)
         self.download_art(force_ext, quality=quality)
 
     def download_thumb(self, force_ext, quality=None):
-        self._download_image("thumb", max_width=250, force_ext=force_ext, quality=quality)
+        self._download_image("thumb", max_width=250,
+                             force_ext=force_ext, quality=quality)
 
     def download_art(self, force_ext, quality=None):
-        self._download_image("art", max_height=1080, force_ext=force_ext, quality=quality)
+        self._download_image("art", max_height=1080,
+                             force_ext=force_ext, quality=quality)
 
     def _download_image(self, key, max_width=None, max_height=None, force_ext=None, quality=None):
         if key == "thumb":
@@ -89,9 +98,25 @@ class Movie(Model):
             raise ValueError(f"Unknown image key: {key}")
         image = Image(url, img_key)
         image.download(max_width, max_height, force_ext, quality=quality)
-        
+
     @classmethod
-    def create(cls, _obj=None, **kwargs):
-        record = super().create(_obj, **kwargs)
-        # record.download_images(force_ext="jpg", quality=50)
+    def upsert(cls, *args, _key="id", **kwargs):
+        flattened_kwargs = cls._flatten_args_kwargs(*args, **kwargs)
+
+        guids = flattened_kwargs.get("guids", [])
+        obj_guids = []
+
+        del flattened_kwargs["guids"]
+        record = super().upsert(_key="ratingKey", **flattened_kwargs)
+
+        for guid in guids:
+            guid.guid = guid.id
+            delattr(guid, "id")
+            guid.media_id = record.id
+            guid.media_type = "movie"
+            obj_guids.append(Guid.upsert(guid, _key="guid"))
+
+        record.guids.clear()
+        record.guids.extend(obj_guids)
+        db.session.commit()
         return record

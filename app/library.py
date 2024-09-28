@@ -13,9 +13,9 @@ class Library(Model):
     key = db.Column(db.String)
 
     @classmethod
-    def create(cls, obj=None, **kwargs):
-        if obj is not None:
-            for section in obj.sections():
-                if section.get("movie"):
-                    Section.create(section)
-        return super().create(obj=obj, **kwargs)
+    def create(cls, _obj=None, **kwargs):
+        # if obj:
+        #     for section in obj.sections():
+        #         if section.get("movie"):
+        #             Section.create(section)
+        return super().create(_obj=_obj, **kwargs)

@@ -23,17 +23,22 @@ logging.basicConfig(
 coloredlogs.install(level="DEBUG")
 
 # Ensure Flask, Alembic, and Werkzeug logs are propagated
+
+
 def configure_loggers():
     for logger_name in ('flask.app', 'alembic.runtime.migration', 'werkzeug'):
         logger = logging.getLogger(logger_name)
         logger.setLevel(logging.DEBUG)
         logger.propagate = True
 
+
 @app.route('/')
 def index():
     return 'Welcome to the Library!'
 
+
 plex = PlexServer(baseurl, token)
+
 
 def ensure_migrations():
     """Ensure the database is migrated to the latest version."""
@@ -43,27 +48,31 @@ def ensure_migrations():
     migrate()
     upgrade()
 
+
 if __name__ == '__main__':
     with app.app_context():
-        print("Starting")
         # ensure_migrations()
         configure_loggers()
-        print("hello")
-        
+
         # server = Server.create(plex)
 
         # library = Library.create(plex.library)
 
-        # sections_data = plex.library.sections()
-        # for section in sections_data:
-        #     section = Section.create(section)
-        
-        movie_data = plex.library.sections()[0].getGuid("plex://movie/5d776b3cfb0d55001f560ff1")
-        movie = Movie.upsert(movie_data)      
-        
+        # print(vars(library))
 
+        # # sections_data = plex.library.sections()
+        # # for section in sections_data:
+        # #     section = Section.create(section)
 
+        movie_data = plex.library.sections()[0].getGuid(
+            "plex://movie/5f40c0a086422500429b9877"
+        )
+
+        Movie.upsert(movie_data, _key="ratingKey")
+        # movie = Movie.get({"ratingKey": 242031}, _first=True)
+        # movie = Movie.search([("ratingKey", "=", 4), ("ratingKey", "=", 242031)], _first=True, _any=True)
+        # print(movie.guids)
 
     app.run(
-        # debug=True
+        debug=False
     )
